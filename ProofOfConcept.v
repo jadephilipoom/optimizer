@@ -299,9 +299,64 @@ Module Glue.
   Definition optimal := CostModel.optimal (size:=Registers.size) equivalent.
 End Glue.
 
+Module InstructionProofs.
+  Import Instructions.
+  Section InstructionProofs.
+    Context {register : Set} {register_size : register -> nat}.
+    (* TODO: simplify/automate; probably want a push_pos2z tactic, etc *)
+    Lemma arg_size_constant_upper_bound x u :
+      (0 < arg_size (register_size:=register_size) (inr x) <= u)%nat ->
+      0 <= x < 2 ^ Z.of_nat u.
+    Proof.
+      cbv [arg_size]; break_match; intro Hrange;
+        destruct Hrange as [Hlower Hupper]; [lia | split; [ lia | ] ].
+      destruct (Z.eq_dec x 0); (* Z->positive proofs want x > 0 *)
+        [ subst; apply Z.pow_pos_nonneg; lia | ].
+      eapply Z.le_lt_trans with (m:=Z.pos (Z.to_pos x));
+        [rewrite Z2Pos.id by lia; reflexivity | ].
+      eapply Z.lt_le_trans with (m:=Z.pos (2^(Pos.size (Z.to_pos x)))).
+      { auto using Pos2Z.pos_lt_pos, Pos.size_gt. }
+      { rewrite Pos2Z.inj_pow.
+        apply Z.pow_le_mono_r; [ lia | ].
+        apply inj_le in Hupper.
+        rewrite positive_nat_Z in Hupper.
+        lia. }
+    Qed.
+  End InstructionProofs.
+End InstructionProofs.
+
+Module CostModelProofs.
+  Import CostModel. Import Instructions.
+  Section CostModelProofs.
+    Context {register : Set} {register_size : register -> nat}.
+    Definition min_instr_cost : nat := 1.
+    Lemma min_instr_cost_correct : forall i, (min_instr_cost <= instr_cost i)%nat.
+    Proof. intros; destruct i; cbv [min_instr_cost instr_cost]; lia. Qed.
+    Fixpoint depth (p : Machine.program (register:=register)
+                                        (instruction:=instruction)) : nat :=
+      match p with
+      | Machine.Ret _ => 0
+      | Machine.Instr _ _ _ cont => S (depth cont)
+      end.
+    Lemma depth_min_cost :
+      forall p, ((depth p) * min_instr_cost <= cost p)%nat.
+    Proof.
+      induction p; intros; [ reflexivity | ]. cbn [depth cost].
+      pose proof min_instr_cost_correct i. lia.
+    Qed.
+    Lemma length_args i rd args cont :
+      Machine.valid
+        (precondition:=Instructions.precondition (register_size:=register_size))
+        (Machine.Instr i rd args cont) ->
+      length args = i.(num_source_regs).
+    Proof. inversion 1; intros; subst. cbv [precondition] in *. tauto. Qed.
+  End CostModelProofs.
+End CostModelProofs.
+
 Module Examples.
   Import Instructions. Import Machine. Import Registers. Import CostModel.
   Import Machine.Notations. Import Maps. Import Glue.
+  Import InstructionProofs. Import CostModelProofs.
 
   Definition examples : list program :=
     [
@@ -374,45 +429,6 @@ Module Examples.
     Definition simple_sum :=
       Eval compute in (nth_default (Ret r0) examples 3). (* ADD32 r2 r0 r1; Ret r2 *)
     Hint Unfold simple_sum.
-
-    (* TODO: move all this somewhere (costmodelproofs?) *)
-    Definition min_instr_cost : nat := 1.
-    Lemma min_instr_cost_correct : forall i, (min_instr_cost <= instr_cost i)%nat.
-    Proof. intros; destruct i; cbv [min_instr_cost instr_cost]; lia. Qed.
-    Fixpoint depth (p : program) : nat :=
-      match p with
-      | Ret _ => 0
-      | Instr _ _ _ cont => S (depth cont)
-      end.
-    Lemma depth_min_cost :
-      forall p, ((depth p) * min_instr_cost <= cost p)%nat.
-    Proof.
-      induction p; intros; [ reflexivity | ]. cbn [depth cost].
-      pose proof min_instr_cost_correct i. lia.
-    Qed.
-    Lemma length_args i rd args cont : valid (Instr i rd args cont) -> length args = i.(num_source_regs).
-    Proof. inversion 1; intros; subst. autounfold in *. tauto. Qed.
-
-    (* TODO: move to InstructionProofs *)
-    (* TODO: simplify/automate; probably want a push_pos2z tactic, etc *)
-    Lemma arg_size_constant_upper_bound x u :
-      (0 < arg_size (register_size:=Registers.size) ($x) <= u)%nat ->
-      0 <= x < 2 ^ Z.of_nat u.
-    Proof.
-      cbv [arg_size]; break_match; intro Hrange;
-        destruct Hrange as [Hlower Hupper]; [lia | split; [ lia | ] ].
-      destruct (Z.eq_dec x 0); (* Z->positive proofs want x > 0 *)
-        [ subst; apply Z.pow_pos_nonneg; lia | ].
-      eapply Z.le_lt_trans with (m:=Z.pos (Z.to_pos x));
-        [rewrite Z2Pos.id by lia; reflexivity | ].
-      eapply Z.lt_le_trans with (m:=Z.pos (2^(Pos.size (Z.to_pos x)))).
-      { auto using Pos2Z.pos_lt_pos, Pos.size_gt. }
-      { rewrite Pos2Z.inj_pow.
-        apply Z.pow_le_mono_r; [ lia | ].
-        apply inj_le in Hupper.
-        rewrite positive_nat_Z in Hupper.
-        lia. }
-    Qed.
 
     Local Ltac prove_valid_ctx :=
       econstructor; autorewrite with push_mapt;
