@@ -1,7 +1,10 @@
 Require Import Coq.ZArith.ZArith.
-Require Import Coq.derive.Derive.
 Require Import Coq.micromega.Lia.
 Require Import Coq.Lists.List.
+Require Import Optimizer.Util.Deciders.
+Require Import Optimizer.Util.ListUtil.
+Require Import Optimizer.Util.Tactics.
+Require Import Optimizer.Util.ZUtil.
 Import ListNotations.
 Local Open Scope Z_scope.
 
@@ -17,204 +20,13 @@ Class map_impl A :=
     get_update_neq : forall B a1 a2 b (m : map B), a1 <> a2 -> get (update m a1 b) a2 = get m a2;
   }.
 Arguments map _ {_} _.
-
-(* Util : eventually will be in a separate file *)
-Module Z.
-  Lemma pow_base_lt a b : 1 < a -> 1 < b -> a < a ^ b.
-  Proof.
-    intros. apply Z.le_lt_trans with (m:=a^1); [ rewrite Z.pow_1_r; lia | ].
-    apply Z.pow_lt_mono_r; lia.
-  Qed.
-
-  Definition seq start len :=
-    List.map Z.of_nat (seq (Z.to_nat start) (Z.to_nat len)).
-  Lemma in_seq start len x :
-    0 <= start -> 0 <= len ->
-    In x (seq start len) <-> (start <= x < start + len).
-  Proof.
-    intros; cbv [seq]. rewrite in_map_iff.
-    split.
-    { destruct 1 as [n [? Hin]]. subst x.
-      apply in_seq in Hin.
-      rewrite <-(Z2Nat.id start), <-(Z2Nat.id len); lia. }
-    { intros. exists (Z.to_nat x).
-      rewrite in_seq.
-      split; [ rewrite Z2Nat.id; lia | ].
-      rewrite <-Z2Nat.inj_add by lia.
-      split; [ apply Z2Nat.inj_le | apply Z2Nat.inj_lt]; lia. }
-  Qed.
-End Z.
-
-Lemma map_nil {A B} (f:A -> B): List.map f [] = []. Proof. reflexivity. Qed.
-Lemma nth_default_nil {A} (d:A) i : nth_default d [] i = d. Proof. destruct i; reflexivity. Qed.
-Lemma nth_default_cons_0 {A} (d:A) l0 l : nth_default d (l0 :: l) 0 = l0. Proof. reflexivity. Qed.
-Lemma nth_default_cons_S {A} (d:A) l0 l i : nth_default d (l0 :: l) (S i) = nth_default d l i. Proof. reflexivity. Qed.
-Lemma length_nil {A} : length (@nil A) = 0%nat. Proof. reflexivity. Qed.
-Lemma length_cons {A} (a0 : A) l : length (a0 :: l) = S (length l). Proof. reflexivity. Qed.
 Hint Rewrite @get_update_eq @get_empty @get_update_neq using congruence :  push_mapt.
-Hint Rewrite @map_cons @map_nil : push_map.
-Hint Rewrite @nth_default_nil @nth_default_cons_0 @nth_default_cons_S : push_nth_default.
-Hint Rewrite @length_nil @length_cons : distr_length.
-Definition minimum {A lt}
-           (lt_dec : forall a1 a2 : A,
-               {lt a1 a2} + {~ lt a1 a2})
-           default ls : A :=
-  fold_right
-    (fun (current next : A) =>
-       if lt_dec next current
-       then next
-       else current)
-    default
-    ls.
-Lemma minimum_correct A lt lt_dec
-      (lt_irr : forall a, ~ lt a a)
-      (lt_asymm : forall a b, lt a b -> ~ lt b a)
-      (nlt_trans : forall a b c, ~ lt b a -> ~ lt c b -> ~ lt c a)
-      default ls :
-  forall a,
-    In a ls ->
-    ~ lt a (@minimum A lt lt_dec default ls).
-Proof.
-  cbv [minimum]; induction ls; cbn [In fold_right]; [tauto|].
-  destruct 1; subst;
-    repeat match goal with
-             |- context [if ?x then _ else _] => destruct x
-           end; eauto.
-Qed.
-Lemma in_minimum A lt lt_dec default ls :
-  @minimum A lt lt_dec default ls = default
-  \/ In (minimum lt_dec default ls) ls.
-Proof.
-  cbv [minimum]; induction ls; cbn [In fold_right]; [tauto|].
-  repeat match goal with
-           |- context [if ?x then _ else _] => destruct x
-         end; tauto.
-Qed.
-Ltac solve_zrange :=
-  solve [repeat match goal with
-                | |- _ /\ _ => split
-                | _ => lia
-                | _ => apply Z.div_le_lower_bound
-                | _ => apply Z.div_lt_upper_bound
-                | _ => apply Z.div_le_upper_bound
-                end].
-Ltac zero_bounds :=
-  repeat match goal with
-           | _ => lia
-           | |- _ >= 0 => apply Z.ge_le
-           | |- _ > 0 => apply Z.gt_lt
-           | |- 0 < _ ^ _ => apply Z.pow_pos_nonneg
-           | |- 0 <= _ ^ _ => apply Z.pow_nonneg
-           | |- 0 <= Z.of_nat _ => apply Nat2Z.is_nonneg
-           | |- 1 < _ ^ _ => apply Z.pow_gt_1
-         end.
-Ltac distr_length :=
-  autorewrite with distr_length in *; try lia.
-(* TODO: improve *)
-Ltac break_match :=
-  match goal with
-  | |- context [match ?x with _ => _ end] => destruct x
-  | H : context [match ?x with _ => _ end] |- _ => destruct x
-  end.
-Ltac inversion_Forall :=
-  repeat match goal with
-         | H : Forall _ (?x :: _) |- _ =>
-           let a := fresh "a" in
-           let l := fresh "l" in
-           inversion H as [ | a l ] ; clear H; subst a; subst l
-         | H : Forall _ [] |- _ => clear H
-         end.
-Ltac destruction :=
-  repeat match goal with
-         | H : exists _, _ |- _ => destruct H
-         | H : _ /\ _ |- _ => destruct H
-         | H : _ \/ _ |- _ => destruct H
-         | H : ?x = ?x |- _ => destruct H
-         end.
+
 Local Ltac cleanup :=
   repeat match goal with
          | _ => progress inversion_Forall
          | _ => progress autorewrite with distr_length in *
          end.
-
-Section Sumbool.
-  Lemma dec_and A B : {A} + {~ A} -> {B} + {~ B} ->
-                      {A /\ B} + {~ (A /\ B)}.
-  Proof. tauto. Qed.
-  Lemma dec_imp (A B : Prop) :
-    {A} + {~ A} ->
-    {B} + {~ B} ->
-    {(A -> B)} + {~ (A -> B)}.
-  Proof. tauto. Qed.
-
-  Definition func_eq_dec A B (f:A -> B) (x y : A) :
-    (forall a1 a2 : A, {a1 = a2} + {a1 <> a2}) ->
-    (forall a1 a2, a1 <> a2 -> f a1 <> f a2) ->
-    {f x = f y} + {f x <> f y}.
-  Proof.
-    intro A_eq_dec; destruct (A_eq_dec x y); [left|right];
-      auto; congruence.
-  Defined.
-
-  Lemma dec_decidable A : {A} + {~ A} -> Decidable.decidable A.
-  Proof. destruct 1; [left|right]; tauto. Qed.
-  
-  Section Finite.
-    Context A (eq_dec : forall a1 a2 : A, {a1 = a2} + {a1 <> a2})
-            (P : A -> Prop) (P_dec : forall a, {P a} + {~ P a}).
-
-    (* enum has all possible elements that would fail (e.g. all
-    elements that satisfy a precondition in P) *)
-    Context enum (Henum : forall a, ~ In a enum -> P a).
-    Lemma dec_forall_exists : {forall a, P a} + {exists a, ~ P a}.
-    Proof.
-      intros.
-      destruct (Forall_Exists_dec P P_dec enum); [ left | right ];
-        rewrite ?Forall_forall, ?Exists_exists in *.
-      { intro a. destruct (in_dec eq_dec a enum); auto. }
-      { destruction. eauto. }
-    Qed.
-    Lemma dec_forall : {forall a, P a} + {~ (forall a, P a)}.
-    Proof.
-      edestruct dec_forall_exists; try eassumption; [tauto|].
-      right; intro.
-      match goal with
-      | H : exists a, ~ P a, H': forall a, P a |- _ =>
-      let x := fresh in
-      destruct H as [x ?]; specialize (H' x); tauto
-      end.
-    Qed.
-    Lemma not_forall_exists : (~ (forall a, P a)) -> exists a, ~ P a.
-    Proof. edestruct dec_forall_exists; try eassumption; tauto. Qed.
-  End Finite.
-End Sumbool.
-Hint Resolve dec_and dec_imp
-     Nat.eq_dec ge_dec gt_dec lt_dec le_dec
-     Z.eq_dec Z_ge_dec Z_gt_dec Z_lt_dec Z_le_dec
-     Bool.bool_dec
-     list_eq_dec in_dec Forall_dec
-     dec_decidable
-  : deciders.
-Ltac f_equal_dec' A B :=
-  match A with
-  | ?f ?a =>
-    match B with
-    | f a => left; reflexivity
-    | ?g a => f_equal_dec' f g
-    | f ?b =>
-      let H := fresh in
-      assert ({a = b} + {a <> b}) as H by auto with deciders;
-      destruct H; [subst a|right; congruence]
-    | ?g ?b => f_equal_dec' f g
-    end
-  end.
-Ltac f_equal_dec :=
-  repeat match goal with
-         | |- {?A = ?B} + {?A <> ?B} =>
-           f_equal_dec' A B
-         end;
-  try (left; reflexivity).
-
 
 (* Machine model *)
 Module Machine.
@@ -1202,7 +1014,6 @@ Module Optimality.
     Local Notation equiv_dec :=
       (equiv_dec reg_eq_dec register_size flag_spec flags_written spec all_registers all_registers_complete all_contexts all_flag_contexts all_contexts_complete all_flag_contexts_complete context_eq_dec flag_context_eq_dec).
     Local Notation cost := (CostModel.cost (register:=register) (instr_cost:=instr_cost)).
-    Print CostModel.optimal.
     Local Notation equivalent := (@equivalent _ _ _ _ _ register_size flag_spec flags_written spec).
     Local Notation optimal := (CostModel.optimal (instr_cost:=instr_cost) (precondition:=precondition) equivalent).
     Local Infix "==" := equivalent (at level 40).
@@ -1322,7 +1133,7 @@ Module Optimality.
       intros; cbv [optimal brute_force_optimal].
       match goal with
         |- context [minimum ?dec ?d ?ls] =>
-        destruct (in_minimum _ _ dec d ls)
+        destruct (in_minimum dec d ls)
       end.
       { rewrite H; eauto using Nat.le_refl. }
       {
@@ -1338,7 +1149,7 @@ Module Optimality.
       pose proof (equivalent_refl p).
       match goal with
         |- context [minimum ?dec ?d ?ls] =>
-        destruct (in_minimum _ _ dec d ls)
+        destruct (in_minimum dec d ls)
       end.
       { congruence. }
       { auto using optimal_program_candidates_equiv. }
@@ -1350,7 +1161,7 @@ Module Optimality.
       intros; cbv [brute_force_optimal].
       match goal with
         |- context [minimum ?dec ?d ?ls] =>
-        destruct (in_minimum _ _ dec d ls)
+        destruct (in_minimum dec d ls)
       end.
       { congruence. }
       { eauto using optimal_program_candidates_valid. }
@@ -1659,13 +1470,22 @@ Module Examples.
     Qed.
     Lemma simple_sum_optimal : optimal simple_sum.
     Proof.
-      apply (CandidateGenerators.All.optimal_limited_domain_equiv simple_sum simple_sum_valid).
-      cbn. repeat econstructor.
-      { intro P; inversion 1.
-        destruct P; cbn [Enumerators.to_abstract] in *; try congruence; [ ].
-        cbv [simple_sum equivalent].
-        intro.
+      apply (CandidateGenerators.All.optimal_limited_domain_equiv simple_sum simple_sum_valid); cbn.
+      repeat match goal with
+             | |- Forall _ _ => econstructor
+             | |- forall x, ?rep _ x -> ~ _ == x =>
+               let P := fresh "p" in
+               intro p; inversion 1
+             | H : Enumerators.to_abstract ?x = _ |- _ =>
+               destruct x; cbn [Enumerators.to_abstract] in H; try congruence; [ ]
+             | H : _ :: _ = _ :: _ |- _ => inversion H; clear H; subst
+             end.
+      { cbv [simple_sum equivalent]; intro.
         (* TODO: use some test vectors to prove these two are not equivalent. *)
+        admit. }
+      { cbv [simple_sum equivalent]; intro.
+        (* TODO: use some test vectors to prove these two are not equivalent. *)
+        admit. }
     Admitted.
 
     Definition sum_shift :=
@@ -1673,10 +1493,32 @@ Module Examples.
     (* Eval cbv [sum_shift] in sum_shift. (* ADD32 %r2 %r0 %r1; SHR64 %r2 %r2 $1; Ret r2 *) *)
     Hint Unfold sum_shift.
 
+    Lemma sum_shift_valid : valid sum_shift.
+    Proof.
+      repeat econstructor; cbn [arg_size size instr_size Pos.size Z.to_pos];
+        try break_match; try lia.
+    Qed.
     Lemma sum_shift_optimal : optimal sum_shift.
     Proof.
+      apply (CandidateGenerators.All.optimal_limited_domain_equiv _ sum_shift_valid); cbn.
+      repeat match goal with
+             | |- Forall _ _ => econstructor
+             | |- forall x, ?rep _ x -> ~ _ == x =>
+               let P := fresh "p" in
+               intro p; inversion 1
+             | H : Enumerators.to_abstract ?x = _ |- _ =>
+               destruct x; cbn [Enumerators.to_abstract] in H; try congruence; [ ]
+             | H : _ :: _ = _ :: _ |- _ => inversion H; clear H; subst
+             end.
+      (* 13 subgoals; will want to refine more *)
     Admitted.
   End Optimal.
 End Examples.
-    
-    
+ 
+(* TODO:
+    - separate everything into files
+    - prove simple_sum_optimal
+    - make a new, more sophisticated candidate generator
+    - prove sum_shift_optimal
+    - remove maps from Machine? (could rely on abstract state, offload division of flag/register updating)
+*) 
