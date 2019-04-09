@@ -54,3 +54,8 @@ Ltac inversion_Forall :=
            inversion H as [ | a l ] ; clear H; subst a; subst l
          | H : Forall _ [] |- _ => clear H
          end.
+Ltac list_cleanup :=
+  repeat match goal with
+         | _ => progress inversion_Forall
+         | _ => progress autorewrite with distr_length in *
+         end.

@@ -1,5 +1,17 @@
 -R src Optimizer
-src/ProofOfConcept.v
+src/AbstractMap.v
+src/Machine.v
+src/MachineProofs.v
+src/ProofOfConcept/Candidates.v
+src/ProofOfConcept/CostModel.v
+src/ProofOfConcept/Enumerators.v
+src/ProofOfConcept/Examples.v
+src/ProofOfConcept/Flags.v
+src/ProofOfConcept/Glue.v
+src/ProofOfConcept/Instructions.v
+src/ProofOfConcept/Maps.v
+src/ProofOfConcept/Optimality.v
+src/ProofOfConcept/Registers.v
 src/Util/Deciders.v
 src/Util/ListUtil.v
 src/Util/Tactics.v
