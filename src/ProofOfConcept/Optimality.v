@@ -320,7 +320,7 @@ Section BruteForce.
                    In t candidates).
 
     Lemma optimal_limited_domain_equiv' :
-      (Forall (fun t => ~ Exists (equivalent p_spec) (rep_enum t)) candidates) ->
+      (Forall (fun t => ~ Exists (fun p' => valid p' /\ equivalent p_spec p') (rep_enum t)) candidates) ->
       optimal p_spec.
     Proof.
       destruct (optimal_exists_dec p_spec); [ assumption | tauto | ].
@@ -335,12 +335,16 @@ Section BruteForce.
     Qed.
 
     Lemma optimal_limited_domain_equiv :
-      (Forall (fun t => forall p', rep t p' -> ~ equivalent p_spec p') candidates) ->
+      (Forall (fun t => forall p', rep t p' -> valid p' -> ~ equivalent p_spec p') candidates) ->
       optimal p_spec.
     Proof.
       intros; apply optimal_limited_domain_equiv'; auto; [ ].
       eapply Forall_impl; [ | eassumption].
-      intros; apply Forall_Exists_neg, Forall_forall; eauto.
+      intros; apply Forall_Exists_neg, Forall_forall.
+      cbv beta in *.
+      match goal with H : forall p : program, ?rep _ p -> valid p -> ~ _ == p |- forall _ : program, _ =>
+                      intro x; intros; specialize (H x ltac:(eauto))
+      end. tauto.
     Qed.
   End Filtered.
 End BruteForce.
