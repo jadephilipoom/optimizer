@@ -2,6 +2,7 @@
 src/AbstractMap.v
 src/Machine.v
 src/MachineProofs.v
+src/System.v
 src/ProofOfConcept/Candidates.v
 src/ProofOfConcept/CostModel.v
 src/ProofOfConcept/Enumerators.v

@@ -1,17 +1,13 @@
 Require Import Coq.ZArith.ZArith.
 Require Import Coq.Lists.List.
 Require Import Optimizer.AbstractMap.
+Require Import Optimizer.System.
 Local Open Scope Z_scope.
 
 Module Machine.
   Section Machine.
-    Context {register flag instruction : Set}.
-    Context {reg_mapt : map_impl register} {flag_mapt : map_impl flag}. (* we use abstract maps to keep track of state *)
-    Context {register_size : register -> Z}
-            {flag_spec : Z (* destination register size *) -> flag -> Z -> bool}.
-    Context {flags_written : instruction -> list flag}
-            {spec : instruction -> list Z -> (flag -> bool) -> Z}
-            {precondition : instruction -> register -> list (register + Z) -> Prop}.
+    Context `{instrt : instr_impl}.
+    Existing Instance reg_mapt. Existing Instance flag_mapt.
     Local Notation arg := (register + Z)%type.
 
     Inductive program : Type :=
@@ -58,6 +54,7 @@ Module Machine.
         exec p1 ctx fctx = exec p2 ctx fctx.
   End Machine.
 
+  Infix "==" := equivalent (at level 40).
   (* TODO: these don't work for parsing and I've no idea why *)
   Notation "i % rd x ; p" := (Instr i rd (x :: nil) p) (at level 100, p at level 200, format "i  % rd  x ; '//' p").
   Notation "i % rd x y ; p" := (Instr i rd (x :: y :: nil) p) (at level 100, p at level 200, format "i  % rd  x  y ; '//' p").

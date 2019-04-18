@@ -31,27 +31,46 @@ Section Sumbool.
 
     (* enum has all possible elements that would fail (e.g. all
     elements that satisfy a precondition in P) *)
-    Context enum (Henum : forall a, ~ In a enum -> P a).
-    Lemma dec_forall_exists : {forall a, P a} + {exists a, ~ P a}.
+    Section with_enum.
+      Context enum (Henum : forall a, ~ In a enum -> P a).
+      Lemma dec_forall_exists : {forall a, P a} + {exists a, ~ P a}.
+      Proof.
+        intros.
+        destruct (Forall_Exists_dec P P_dec enum); [ left | right ];
+          rewrite ?Forall_forall, ?Exists_exists in *.
+        { intro a. destruct (in_dec eq_dec a enum); auto. }
+        { destruction. eauto. }
+      Qed.
+      Lemma dec_forall : {forall a, P a} + {~ (forall a, P a)}.
+      Proof.
+        edestruct dec_forall_exists; try eassumption; [tauto|].
+        right; intro.
+        match goal with
+        | H : exists a, ~ P a, H': forall a, P a |- _ =>
+        let x := fresh in
+        destruct H as [x ?]; specialize (H' x); tauto
+        end.
+      Qed.
+      Lemma not_forall_exists : (~ (forall a, P a)) -> exists a, ~ P a.
+      Proof. edestruct dec_forall_exists; try eassumption; tauto. Qed.
+    End with_enum.
+
+    Lemma dec_forall_dependent B (projA : B -> A) enumB :
+      (forall b, ~ In b enumB -> P (projA b)) ->
+      (forall a, ~ Exists (fun b => projA b = a) enumB -> P a) ->
+      {forall a, P a} + {~ (forall a, P a)}.
     Proof.
       intros.
-      destruct (Forall_Exists_dec P P_dec enum); [ left | right ];
-        rewrite ?Forall_forall, ?Exists_exists in *.
-      { intro a. destruct (in_dec eq_dec a enum); auto. }
-      { destruction. eauto. }
+      destruct (Forall_Exists_dec (fun b => P (projA b)) (fun b=> P_dec (projA b)) enumB); [ left | right ];
+        repeat match goal with
+               | _ => destruction; subst; solve [eauto]
+               | H : forall x, ~ Exists ?P ?ls -> _ |- forall _, _ =>
+                 let a := fresh in
+                 intro a;
+                   destruct (Exists_dec ((fun x => P) a) ls); [ solve [eauto] | | solve [eauto] ]
+               | _ => progress rewrite ?Forall_forall, ?Exists_exists in *
+               end.
     Qed.
-    Lemma dec_forall : {forall a, P a} + {~ (forall a, P a)}.
-    Proof.
-      edestruct dec_forall_exists; try eassumption; [tauto|].
-      right; intro.
-      match goal with
-      | H : exists a, ~ P a, H': forall a, P a |- _ =>
-      let x := fresh in
-      destruct H as [x ?]; specialize (H' x); tauto
-      end.
-    Qed.
-    Lemma not_forall_exists : (~ (forall a, P a)) -> exists a, ~ P a.
-    Proof. edestruct dec_forall_exists; try eassumption; tauto. Qed.
   End Finite.
 End Sumbool.
 Hint Resolve dec_and dec_imp

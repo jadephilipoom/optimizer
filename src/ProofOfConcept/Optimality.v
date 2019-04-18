@@ -4,6 +4,7 @@ Require Import Coq.Lists.List.
 Require Import Optimizer.AbstractMap.
 Require Import Optimizer.Machine.
 Require Import Optimizer.MachineProofs.
+Require Import Optimizer.System.
 Require Import Optimizer.ProofOfConcept.CostModel. (* TODO: factor out dependency on specific ProofOfConcept things so the proofs can be reused *)
 Require Import Optimizer.ProofOfConcept.Enumerators.
 Require Import Optimizer.Util.Deciders.
@@ -13,17 +14,39 @@ Import ListNotations.
 Local Open Scope Z_scope.
 Import Machine.Machine.
 
-(* N.B. nothing in this section is intended to be run! These
-  functions would take ages and exists just for proofs. *)
-Section BruteForce.
-  (* TODO : the contexts are getting out of hand. Need to decide who
-    depends on whom, and move some stuff from context to actual
-    implementations. Either that, or get a nice record-based
-    precondition system set up. *)
-  Context {instruction flag register : Set}
-          {reg_mapt : map_impl register}
-          {flag_mapt : map_impl flag}
-          (reg_map_equiv :
+Section Optimality.
+  Context `{instrt : instr_impl}.
+  Existing Instance reg_mapt. Existing Instance flag_mapt.
+  Existing Instance reg_enum. Existing Instance flag_enum. Existing Instance instr_enum.
+  Hint Resolve reg_eq_dec flag_eq_dec instr_eq_dec : deciders.
+
+  Context (cost : program -> nat)
+          (instr_cost_pos : forall i rd args cont, (cost cont < cost (Instr i rd args cont))%nat).
+  Context (enumerate_programs_under_cost : nat -> list program)
+          (enumerate_under_cost_with_condition : (program -> bool) -> nat -> list program).
+  Context (enumerate_programs_under_cost_complete :
+             forall p c,
+               ~ In p (enumerate_programs_under_cost c) ->
+               ~ valid p \/ ~ (cost p < c)%nat)
+          (enumerate_under_cost_with_condition_complete :
+             forall cond c p,
+               cond p = true ->
+               valid p ->
+               (cost p < c)%nat ->
+               In p (enumerate_under_cost_with_condition cond c))
+          (enumerate_under_cost_with_condition_sound :
+             forall cond c p,
+               In p (enumerate_under_cost_with_condition cond c) -> cond p = true)
+          (enumerate_under_cost_with_condition_bound :
+             forall cond c p,
+               (0 < c)%nat -> In p (enumerate_under_cost_with_condition cond c) ->
+               (cost p < c)%nat)
+          (enumerate_under_cost_with_condition_zero :
+             forall cond, enumerate_under_cost_with_condition cond 0 = []).
+  Context (all_contexts : list (map register Z))
+          (all_contexts_complete :
+             forall ctx, valid_context ctx -> In ctx all_contexts).
+  Context (reg_map_equiv :
              forall B (m1 m2 : map register B),
                (forall a, get m1 a = get m2 a) ->
                m1 = m2)
@@ -31,62 +54,24 @@ Section BruteForce.
              forall B (m1 m2 : map flag B),
                (forall a, get m1 a = get m2 a) ->
                m1 = m2)
-          (instr_size : instruction -> Z)
-          (register_size : register -> Z)
-          (instr_cost num_source_regs : instruction -> nat)
-          (precondition : instruction -> register -> list (register + Z) -> Prop)
-          (flag_spec : Z -> flag -> Z -> bool)
-          (flags_written : instruction -> list flag)
-          (spec : instruction -> list Z -> (flag -> bool) -> Z)
-          (flag_eq_dec : forall f1 f2 : flag, {f1 = f2} + {f1 <> f2})
-          (reg_eq_dec : forall r1 r2 : register, {r1 = r2} + {r1 <> r2})
-          (instr_eq_dec : forall i1 i2 : instruction, {i1 = i2} + {i1 <> i2})
           (context_eq_dec : forall ctx1 ctx2 : map register Z, {ctx1 = ctx2} + {ctx1 <> ctx2})
-          (flag_context_eq_dec : forall fctx1 fctx2 : map flag bool, {fctx1 = fctx2} + {fctx1 <> fctx2})
-          (all_flags : list flag) (all_registers : list register) (all_instructions : list instruction).
-  Context (all_flags_complete : forall f, In f all_flags)
-          (all_registers_complete : forall r, In r all_registers)
-          (all_instructions_complete : forall i, In i all_instructions)
-          (instr_cost_pos : forall i, (0 < instr_cost i)%nat)
-          (precondition_instr_size :
-             forall i rd args x,
-               precondition i rd args ->
-               In (inr x) args ->
-               0 <= x < 2^instr_size i)
-          (precondition_num_source_regs :
-             forall i rd args,
-               precondition i rd args ->
-               length args = num_source_regs i)
-          (precondition_dec :
-             forall i rd args,
-               {precondition i rd args} + {~ precondition i rd args}).
-  Hint Resolve valid_dec equiv_dec precondition_dec : deciders.
-  Local Notation program := (@Machine.program register instruction).
-  Local Notation valid := (valid (precondition:=precondition)).
-  Local Notation valid_dec := (valid_dec precondition_dec).
-  Local Notation enumerate_programs_under_cost :=
-    (Enumerators.enumerate_programs_under_cost instr_size instr_cost num_source_regs all_registers all_instructions).
-  Local Notation enumerate_under_cost_with_condition :=
-    (Enumerators.enumerate_under_cost_with_condition instr_size instr_cost num_source_regs all_registers all_instructions).
-  Local Notation all_contexts :=
-    (Enumerators.enumerate_contexts (register_size:=register_size) all_registers).
-  Local Notation all_flag_contexts := (Enumerators.enumerate_flag_contexts all_flags).
-  Local Notation all_contexts_complete :=
-    (Enumerators.enumerate_contexts_complete all_registers all_registers_complete reg_eq_dec reg_map_equiv).
-  Local Notation all_flag_contexts_complete :=
-    (Enumerators.enumerate_flag_contexts_complete all_flags all_flags_complete flag_eq_dec flag_map_equiv).
+          (flag_context_eq_dec : forall fctx1 fctx2 : map flag bool, {fctx1 = fctx2} + {fctx1 <> fctx2}).
   Local Notation equiv_dec :=
-    (equiv_dec reg_eq_dec register_size flag_spec flags_written spec all_registers all_registers_complete all_contexts all_flag_contexts all_contexts_complete all_flag_contexts_complete context_eq_dec flag_context_eq_dec).
-  Local Notation cost := (CostModel.cost (register:=register) (instr_cost:=instr_cost)).
-  Local Notation equivalent := (@equivalent _ _ _ _ _ register_size flag_spec flags_written spec).
-  Local Notation optimal := (CostModel.optimal (instr_cost:=instr_cost) (precondition:=precondition) equivalent).
+    (equiv_dec all_contexts all_contexts_complete (fctx_enum flag_map_equiv) context_eq_dec flag_context_eq_dec).
   Local Infix "==" := equivalent (at level 40).
+  Existing Instance fctx_enum.
+  Hint Resolve valid_dec : deciders.
+
+  Definition optimal (p : program) : Prop :=
+    forall p' : program,
+      valid p'
+      -> (equivalent p p')
+      -> (cost p <= cost p')%nat.
 
   Local Ltac use_epuc_complete_alt :=
     match goal with
       H : ~ In _ _ |- _ =>
-      apply Enumerators.enumerate_programs_under_cost_complete_alt with
-      (precondition0:=precondition) (cost:=cost) in H;
+      apply enumerate_programs_under_cost_complete in H;
       auto; [ ]; (* solve side conditions *)
       destruct H; (tauto || lia) (* solve remaining goal *)
     end.
@@ -100,18 +85,13 @@ Section BruteForce.
     (p1 == p2) -> (p2 == p3) -> (p1 == p3).
   Proof. cbv [equivalent]; eauto using eq_trans. Qed.
 
-  Lemma instr_cost_cost i rd args cont :
-    (cost (Instr i rd args cont) = cost cont + instr_cost i)%nat.
-  Proof. cbn [cost]; lia. Qed.
-  Local Hint Resolve instr_cost_cost.
-
   Lemma optimal_dec p : {optimal p} + {~ optimal p}.
   Proof.
     cbv [optimal].
     apply dec_forall with (enum:=enumerate_programs_under_cost (cost p)).
     { apply program_eq_dec; auto using reg_eq_dec, instr_eq_dec. }
     { intros; apply dec_imp;
-        eauto using dec_imp, all_contexts_complete, all_flag_contexts_complete with deciders. }
+        eauto using dec_imp, all_contexts_complete, enum_complete, equiv_dec with deciders. }
     { intros. use_epuc_complete_alt. }
   Qed.
 
@@ -136,7 +116,7 @@ Section BruteForce.
     In p' (optimal_program_candidates p).
   Proof.
     cbv [optimal_program_candidates optimal_condition]; intros.
-    eapply Enumerators.enumerate_under_cost_with_condition_complete; eauto; [ ].
+    eapply enumerate_under_cost_with_condition_complete; eauto; [ ].
     repeat break_match; try tauto.
   Qed.
   Lemma optimal_program_candidates_sound p p' :
@@ -144,7 +124,7 @@ Section BruteForce.
     optimal_condition p p' = true.
   Proof.
     cbv [optimal_program_candidates].
-    eapply Enumerators.enumerate_under_cost_with_condition_sound; eauto.
+    eapply enumerate_under_cost_with_condition_sound; eauto.
   Qed.
   Lemma optimal_program_candidates_equiv p p' :
     In p' (optimal_program_candidates p) ->
@@ -187,8 +167,9 @@ Section BruteForce.
     cost p = 0%nat ->
     optimal_program_candidates p = [].
   Proof.
-    destruct p as [|i ?]; cbn [cost]; [|pose proof (instr_cost_pos i); lia].
-    reflexivity.
+    intros; cbv [optimal_program_candidates optimal_condition].
+    destruct p as [|i r l p]; [|pose proof (instr_cost_pos i r l p); lia].
+    match goal with H : _ = 0%nat |- _ => rewrite H end; auto.
   Qed.
   
   Lemma brute_force_optimal_bound p :
@@ -259,7 +240,7 @@ Section BruteForce.
         (enum:=enumerate_programs_under_cost (cost p)) in H; [ destruct H as [p2 ?] | .. ]
     end;
       intros; try apply dec_imp;
-        eauto using dec_imp, all_contexts_complete, all_flag_contexts_complete with deciders;
+        eauto using dec_imp, all_contexts_complete, enum_complete, equiv_dec with deciders;
         try use_epuc_complete_alt; [ ].
     repeat match goal with
            | H : _ |- _ =>
@@ -347,4 +328,4 @@ Section BruteForce.
       end. tauto.
     Qed.
   End Filtered.
-End BruteForce.
+End Optimality.

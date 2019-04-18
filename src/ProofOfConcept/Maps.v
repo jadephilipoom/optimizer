@@ -32,16 +32,17 @@ Module Maps.
       | r6 => m.(val_r6)
       end.
 
-    Definition update {B} (m : reg_map) (r : register) (v : B) : reg_map :=
-      {|
-        val_r0 := if (reg_eq_dec r r0) then v else m.(val_r0);
-        val_r1 := if (reg_eq_dec r r1) then v else m.(val_r1);
-        val_r2 := if (reg_eq_dec r r2) then v else m.(val_r2);
-        val_r3 := if (reg_eq_dec r r3) then v else m.(val_r3);
-        val_r4 := if (reg_eq_dec r r4) then v else m.(val_r4);
-        val_r5 := if (reg_eq_dec r r5) then v else m.(val_r5);
-        val_r6 := if (reg_eq_dec r r6) then v else m.(val_r6);
-      |}.
+    Definition update :=
+      fun {B} (m : reg_map) (r : register) (v : B) =>
+        {|
+          val_r0 := if (reg_eq_dec r r0) then v else m.(val_r0);
+          val_r1 := if (reg_eq_dec r r1) then v else m.(val_r1);
+          val_r2 := if (reg_eq_dec r r2) then v else m.(val_r2);
+          val_r3 := if (reg_eq_dec r r3) then v else m.(val_r3);
+          val_r4 := if (reg_eq_dec r r4) then v else m.(val_r4);
+          val_r5 := if (reg_eq_dec r r5) then v else m.(val_r5);
+          val_r6 := if (reg_eq_dec r r6) then v else m.(val_r6);
+        |}.
 
     Definition empty {B : Type} (default : B) : reg_map :=
       {|
@@ -54,12 +55,20 @@ Module Maps.
         val_r6 := default;
       |}.
 
+    Lemma get_empty  B (d : B) r : get (empty d) r = d.
+    Proof. destruct r; reflexivity. Qed.
+    
+    Lemma get_update_eq B r (b : B) (m : reg_map) : get (update m r b) r = b.
+    Proof. destruct r; reflexivity. Qed.
+    Lemma get_update_neq B r1 r2 (b : B) (m : reg_map) : r1 <> r2 -> get (update m r1 b) r2 = get m r2.
+    Proof. intros; destruct r2; cbn; break_match; congruence. Qed.
+
     Instance reg_mapt : map_impl register.
     Proof.
       apply Build_map_impl with (get:=@get) (update:=@update) (empty:=@empty).
-      { intros. destruct a; reflexivity. }
-      { intros. destruct a; reflexivity. }
-      { intros. destruct a2; cbn; break_match; congruence. }
+      { apply get_empty. }
+      { apply get_update_eq. }
+      { apply get_update_neq. }
     Defined.
   End RegMaps.
 

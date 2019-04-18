@@ -8,7 +8,7 @@ Import ListNotations.
 Local Open Scope Z_scope.
 
 Section Defns.
-  Context {register : Set} {register_size : register -> Z}.
+  Context {register : Type} {register_size : register -> Z}.
 
   Local Notation "x '[' n ']'" := (List.nth_default 0 x n) (at level 0).
   Local Notation "x >> y" := (Z.shiftr x y) (at level 100).
@@ -78,7 +78,7 @@ Section Defns.
 End Defns.
 
 Section Proofs.
-  Context {register : Set} {register_size : register -> Z}.
+  Context {register : Type} {register_size : register -> Z}.
   (* TODO: simplify/automate; probably want a push_pos2z tactic, etc *)
   Lemma arg_size_constant_upper_bound x u :
     0 < arg_size (register_size:=register_size) (inr x) <= u ->

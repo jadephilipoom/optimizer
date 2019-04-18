@@ -51,16 +51,16 @@ Qed.
 
 Hint Unfold
      Machine.equivalent Machine.exec 
-     CostModel.optimal CostModel.cost
+     Optimality.optimal CostModel.cost
      Instructions.instr_cost Instructions.precondition.
 Ltac simplify := autounfold; cbn [size value spec arg_value].
 
 (* prove sum using 32- and 64- bit adds give the same result *)
 Section SumEquiv.
   Definition sum :=
-    Eval compute in (nth_default (Ret r0) examples 5). (* ADD32 r2 r0 r1; SHR64 r2 r2 $1; Ret r2 *)
+    Eval cbv [nth_default nth_error examples] in (nth_default (Ret r0) examples 5). (* ADD32 r2 r0 r1; SHR64 r2 r2 $1; Ret r2 *)
   Definition sum' :=
-    Eval compute in (nth_default (Ret r0) examples 6). (* ADD64 r2 r0 r1; SHR64 r2 r2 $1; Ret r2 *)
+    Eval cbv [nth_default nth_error examples] in (nth_default (Ret r0) examples 6). (* ADD64 r2 r0 r1; SHR64 r2 r2 $1; Ret r2 *)
   Hint Unfold sum sum'.
   
   Lemma sums_equiv : sum == sum'.
@@ -92,7 +92,7 @@ Section Optimal.
     repeat match goal with
            | Hv : valid _ |- _ =>
              inversion Hv; subst; clear Hv
-           | H : precondition _ _ ?args |- _ =>
+           | H : System.precondition _ _ ?args |- _ =>
              apply precondition_length_args in H;
              cbn [num_source_regs] in H;
              repeat (destruct args as [|? args]; distr_length; [ ])
@@ -155,7 +155,6 @@ Section Optimal.
           | ra := ?r, rb := ?r |- _ => apply true
           end; apply false.
   Defined.
-  Eval cbv [reg_eqb] in reg_eqb.
   Lemma reg_eq_dec_to_eqb A (t f : A) ra rb :
     (if (reg_eq_dec ra rb) then t else f) =
     (if (reg_eqb ra rb) then t else f).
@@ -171,7 +170,7 @@ Section Optimal.
     apply (All.optimal_limited_domain_equiv _ sum_shift_valid); cbn.
     optimal_cases; cbv [simple_sum]; intros.
     all:destruct_args.
-    Time all:test simple_sum_tests. (* *)
+    Time all:test simple_sum_tests. (* 49.641s *)
 
     Ltac innermost_mod_small t :=
       match t with

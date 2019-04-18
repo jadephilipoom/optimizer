@@ -8,6 +8,7 @@ Require Import Optimizer.Util.ZUtil.
 Require Import Optimizer.AbstractMap.
 Require Import Optimizer.Machine.
 Require Import Optimizer.MachineProofs.
+Require Import Optimizer.System.
 Require Import Optimizer.ProofOfConcept.CostModel.
 Require Import Optimizer.ProofOfConcept.Maps.
 Import ListNotations.
@@ -15,22 +16,17 @@ Local Open Scope Z_scope.
 Import Machine.Machine.
 
 Section Enumerators.
-  Context {instruction flag register : Set}
-          {register_size : register -> Z}
-          (instr_size : instruction -> Z)
-          (instr_cost : instruction -> nat)
-          (num_source_regs : instruction -> nat)
-          (precondition : instruction -> register -> list (register + Z) -> Prop)
-          (cost : program (instruction:=instruction)
-                          (register:=register) -> nat)
-          (all_flags : list flag)
-          (all_registers : list register)
-          (all_instructions : list instruction).
+  Context `{instrt : instr_impl}.
+  Context (instr_cost : instruction -> nat) (instr_size : instruction -> Z) (cost : program -> nat).
+  Existing Instance reg_mapt. Existing Instance flag_mapt.
+  Existing Instance reg_enum. Existing Instance flag_enum. Existing Instance instr_enum.
+  Hint Resolve reg_eq_dec flag_eq_dec instr_eq_dec : deciders.
+  
   (* strips away irrelevant details like swapping equivalent
     registers around. Eventually this will need to be a little more
     sophisticated as the cost model matures.  *)
   Definition abstract_program := list instruction.
-  Fixpoint to_abstract (p : program (register:=register))
+  Fixpoint to_abstract (p : program)
     : abstract_program :=
     match p with
     | Ret _ => []
@@ -48,7 +44,7 @@ Section Enumerators.
                      then
                        List.map (cons i)
                                 (enumerate_under_cost' fuel' (max_cost - i.(instr_cost)))
-                     else []) all_instructions
+                     else []) enum
     end.
   Definition enumerate_under_cost max_cost :=
     enumerate_under_cost' max_cost max_cost.
@@ -67,27 +63,20 @@ Section Enumerators.
         (enumerate_possible_maps default possible_values keys')
     end.
 
-  Section with_reg_map.
-    Context {reg_map : map_impl register}.
-    Definition enumerate_contexts :=
-      enumerate_possible_maps
-        0
-        (fun r => Z.seq 0 (2^(register_size r)))
-        all_registers.
-  End with_reg_map.
-
-  Section with_flag_map.
-    Context {flag_map : map_impl flag}.
-    Definition enumerate_flag_contexts :=
-      enumerate_possible_maps
-        false
-        (fun _ => [true; false])
-        all_flags.
-  End with_flag_map.
+  Definition enumerate_contexts :=
+    enumerate_possible_maps
+      0
+      (fun r => Z.seq 0 (2^(register_size r)))
+      enum.
+  Definition enumerate_flag_contexts :=
+    enumerate_possible_maps
+      false
+      (fun _ => [true; false])
+      enum.
 
   Definition enumerate_argument_values (max_const : Z)
     : list (register + Z) :=
-    List.map inr (Z.seq 0 max_const) ++ List.map inl all_registers.
+    List.map inr (Z.seq 0 max_const) ++ List.map inl enum.
   Fixpoint enumerate_arguments (max_val : Z) (n : nat) :=
     match n with
     | O => [ [] ]
@@ -100,14 +89,14 @@ Section Enumerators.
   Fixpoint enumerate_concrete (ap : abstract_program)
     : list program :=
     match ap with
-    | [] => List.map Ret all_registers
+    | [] => List.map Ret enum
     | i :: ap' =>
       List.flat_map
         (fun cont =>
            List.flat_map
              (fun args =>
                 List.map
-                  (fun rd => Instr i rd args cont) all_registers)
+                  (fun rd => Instr i rd args cont) enum)
              (enumerate_arguments
                 (2 ^ instr_size i)
                 i.(num_source_regs)))
@@ -139,11 +128,7 @@ Section Enumerators.
             (precondition_dec :
                forall i rd args,
                  {precondition i rd args} + {~ precondition i rd args})
-            (register_size_pos : forall r, 0 < register_size r)
-            (all_flags_complete : forall r, In r all_flags)
-            (all_registers_complete : forall r, In r all_registers)
-            (all_instructions_complete : forall i, In i all_instructions).
-    Local Notation valid := (valid (precondition:=precondition)).
+            (register_size_pos : forall r, 0 < register_size r).
 
     Lemma enumerate_under_cost'_complete :
       forall p max_cost fuel,
@@ -155,7 +140,7 @@ Section Enumerators.
       cbn [to_abstract enumerate_under_cost' flat_map].
       apply in_cons, in_flat_map.
       exists i. pose proof (instr_cost_pos i).
-      split; [ apply all_instructions_complete | ].
+      split; [ apply enum_complete | ].
       rewrite cost_Instr in *.
       break_match; [ | lia ].
       apply in_map, IHp; lia.
@@ -239,37 +224,33 @@ Section Enumerators.
     Qed.
 
     Section with_reg_map.
-      Context {reg_map : map_impl register}
-              (reg_eq_dec : forall r1 r2 : register,
-                  {r1 = r2} + {r1 <> r2})
-              (reg_map_equiv :
+      Context (reg_map_equiv :
                  forall B (m1 m2 : map register B),
                    (forall a, get m1 a = get m2 a) ->
                    m1 = m2).
       Lemma enumerate_contexts_complete ctx :
-        valid_context (register_size:=register_size) ctx ->
+        valid_context ctx ->
         In ctx enumerate_contexts.
       Proof.
-        intros; apply enumerate_possible_maps_complete; auto; [ ].
-        intro r.
-        pose proof (valid_context_range register_size ctx r ltac:(auto)) as Hrange.
+        intros; apply enumerate_possible_maps_complete; auto with deciders; [ ].
+        intro r. pose proof (valid_context_range ctx r ltac:(auto)).
         apply Z.in_seq; lia.
       Qed.
     End with_reg_map.
 
     Section with_flag_map.
-      Context {flag_map : map_impl flag}
-              (flag_eq_dec : forall k1 k2 : flag, {k1 = k2} + {k1 <> k2})
-              (flag_map_equiv :
+      Context (flag_map_equiv :
                  forall B (m1 m2 : map flag B),
                    (forall a, get m1 a = get m2 a) ->
                    m1 = m2).
       Lemma enumerate_flag_contexts_complete fctx :
         In fctx enumerate_flag_contexts.
       Proof.
-        intros; apply enumerate_possible_maps_complete; auto; [ ].
+        intros; apply enumerate_possible_maps_complete; auto with deciders; [ ].
         intro f; destruct (get fctx f); cbn; tauto.
       Qed.
+      Instance fctx_enum : enumerator (map flag bool).
+      Proof. econstructor. apply enumerate_flag_contexts_complete. Defined.
     End with_flag_map.
 
     Lemma enumerate_argument_values_complete i rd args :
@@ -375,7 +356,7 @@ Section Enumerators.
     Proof.
       intros; pose proof (enumerate_programs_under_cost_complete p c).
       apply Decidable.not_and.
-      { destruct (valid_dec precondition_dec p); [left | right]; tauto. }
+      { destruct (valid_dec p); [left | right]; tauto. }
       { destruct 1; intros; tauto. }
     Qed.
 
@@ -409,6 +390,8 @@ Section Enumerators.
         repeat match goal with H : _ /\ _ |- _ => destruct H end.
       auto using enumerate_programs_under_cost_bound.
     Qed.
+    Lemma enumerate_under_cost_with_condition_zero cond :
+      enumerate_under_cost_with_condition cond 0 = [].
+    Proof. reflexivity. Qed.
   End EnumeratorProofs.
 End Enumerators.
-

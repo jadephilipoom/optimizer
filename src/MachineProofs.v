@@ -3,6 +3,7 @@ Require Import Coq.micromega.Lia.
 Require Import Coq.Lists.List.
 Require Import Optimizer.AbstractMap.
 Require Import Optimizer.Machine.
+Require Import Optimizer.System.
 Require Import Optimizer.Util.Deciders.
 Require Import Optimizer.Util.ListUtil.
 Import ListNotations.
@@ -10,25 +11,10 @@ Local Open Scope Z_scope.
 Import Machine.Machine.
 
 Section MachineProofs.
-  Context {instruction flag register : Set}
-          {precondition : instruction -> register -> list (register+ Z) -> Prop}
-          {reg_mapt : map_impl register}
-          {flag_mapt : map_impl flag}
-          (instruction_eq_dec : forall i1 i2 : instruction, {i1 = i2} + {i1 <> i2})
-          (reg_eq_dec : forall r1 r2 : register, {r1 = r2} + {r1 <> r2})
-          (register_size : register -> Z)
-          (flag_spec : Z -> flag -> Z -> bool)
-          (flags_written : instruction -> list flag)
-          (spec : instruction -> list Z -> (flag -> bool) -> Z) 
-          (all_registers : list register)
-          (all_registers_complete : forall r, In r all_registers)
-          (precondition_dec :
-             forall i rd args,
-               {precondition i rd args} + {~ precondition i rd args}).
-  Local Notation valid_context := (valid_context (register_size:=register_size)).
-  Local Notation valid := (valid (precondition:=precondition)).
-  Local Notation equivalent := (equivalent (register_size:=register_size) (flag_spec:=flag_spec) (flags_written:=flags_written) (spec:=spec)).
-  Hint Resolve instruction_eq_dec reg_eq_dec : deciders.
+  Context `{instrt : instr_impl}.
+  Existing Instance reg_mapt. Existing Instance flag_mapt.
+  Existing Instance reg_enum. Existing Instance flag_enum.
+  Hint Resolve instr_eq_dec reg_eq_dec : deciders.
 
   Lemma valid_context_range ctx r :
     valid_context ctx ->
@@ -37,7 +23,7 @@ Section MachineProofs.
 
   Definition valid_dec p : {valid p} + {~ valid p}.
   Proof.
-    clear - precondition_dec; induction p;
+    induction p;
       repeat match goal with
              | |- context [valid (Instr ?i ?rd ?args _)] =>
                progress
@@ -55,13 +41,13 @@ Section MachineProofs.
   Definition valid_context_dec (ctx : map register Z) :
     {valid_context ctx} + {~ (valid_context ctx)}.
   Proof.
-    clear - reg_eq_dec all_registers_complete register_size; cbv [valid_context].
-    apply dec_forall with (enum:=all_registers); [ solve [auto] | | ].
+    cbv [valid_context].
+    apply dec_forall with (enum:=enum); [ solve [auto with deciders] | | ].
     { intro r.
       destruct (Z_le_dec 0 (get ctx r)); [| right; lia].
       destruct (Z_lt_dec (get ctx r) (2^(register_size r)));
         [left | right]; lia. }
-    { intro r; specialize (all_registers_complete r); tauto. }
+    { intro r; specialize (enum_complete r); tauto. }
   Defined.
   Hint Resolve valid_context_dec : deciders.
 
@@ -70,16 +56,13 @@ Section MachineProofs.
   Hint Resolve arg_eq_dec : deciders.
 
   Definition program_eq_dec :
-    forall p1 p2 : program (register:=register)
-                           (instruction:=instruction),
-      {p1 = p2} + {p1 <> p2}.
+    forall p1 p2 : program, {p1 = p2} + {p1 <> p2}.
   Proof. induction p1; destruct p2; try (right; congruence); f_equal_dec. Defined.
 
   Section with_context_enumerators.
-    Context (all_contexts : list (map register Z))
-            (all_flag_contexts : list (map flag bool))
-            (all_contexts_complete : forall ctx, valid_context ctx -> In ctx all_contexts)
-            (all_flag_contexts_complete : forall fctx, In fctx all_flag_contexts).
+    Context (valid_contexts : list (map register Z))
+            (valid_contexts_complete : forall ctx, valid_context ctx -> In ctx valid_contexts)
+            (fctx_enum : enumerator (map flag bool)).
     Context (context_eq_dec : forall ctx1 ctx2 : map register Z, {ctx1 = ctx2} + {ctx1 <> ctx2})
             (flag_context_eq_dec : forall fctx1 fctx2 : map flag bool, {fctx1 = fctx2} + {fctx1 <> fctx2}).
     Hint Resolve context_eq_dec flag_context_eq_dec : deciders.
@@ -88,10 +71,14 @@ Section MachineProofs.
     Proof.
       repeat match goal with
              | _ => progress (intros; cbv [equivalent])
-             | H : context [@In ?A _ ?ls] |- {forall (_ : ?A), _} + {~ (forall (_ : ?A), _)} =>
-               apply dec_forall with (enum:=ls)
-             | H : ~ In ?x ?ls |- _ => assert (In x ls) by auto; tauto
-             | _ => solve [auto using dec_imp with deciders]
+             | |- {forall (_ : ?A), _} + {~ (forall (_ : ?A), _)} =>
+               apply dec_forall with (enum:=enum)
+             | |- {forall (_ : ?A), _} + {~ (forall (_ : ?A), _)} =>
+               apply dec_forall with (enum:=valid_contexts)
+             | H : ~ In ?x ?ls |- _ => assert (In x ls) by auto using enum_complete; tauto
+             | _ => tauto
+             | _ => solve [apply enum_complete]
+             | |- { _ } + { _ } => solve [auto using dec_imp with deciders]
              end.
     Qed.
   End with_context_enumerators.
