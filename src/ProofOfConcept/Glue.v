@@ -39,9 +39,11 @@ Instance instrt : instr_impl :=
                    enum_complete := Instructions.all_instructions_complete;
                  |};
     flags_written := Instructions.flags_written;
+    flags_read := Instructions.flags_read;
     num_source_regs := Instructions.num_source_regs;
     spec := Instructions.spec;
     precondition := Instructions.precondition (register_size:=Registers.size);
+    flags_read_correct := Instructions.flags_read_correct;
     instr_eq_dec := Instructions.instr_eq_dec;
     precondition_dec := Instructions.precondition_dec;
   |}.

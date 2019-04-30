@@ -1,6 +1,7 @@
 Require Import Coq.ZArith.ZArith.
 Require Import Coq.micromega.Lia.
 Require Import Coq.Lists.List.
+Require Import Optimizer.AbstractMap.
 Require Import Optimizer.ProofOfConcept.Flags.
 Require Import Optimizer.Util.Deciders.
 Require Import Optimizer.Util.Tactics.
@@ -21,6 +22,12 @@ Section Defns.
     match i with
     | ADD32 | ADD64 | ADC64 | SUB64 | MUL64 | SHR64 | SHL64 => (Flags.C :: Flags.Z :: nil)
     | MOV64 => nil
+    end.
+
+  Definition flags_read (i:instruction) : list Flags.flag :=
+    match i with
+    | ADC64 => (Flags.C :: nil)
+    | ADD32 | ADD64| SUB64 | MUL64 | SHR64 | SHL64 | MOV64 => nil 
     end.
 
   Definition spec (i:instruction) (args : list Z) (fctx : Flags.flag -> bool) : Z :=
@@ -123,5 +130,24 @@ Section Proofs.
     {precondition (register_size:=register_size) i rd args}
     + {~ precondition (register_size:=register_size) i rd args}.
   Proof. cbv [precondition]; auto with deciders. Defined.
+
+
+  Context {flag_mapt : map_impl Flags.flag}.
+  
+  Lemma flags_read_correct i f :
+    ~ (In f i.(flags_written)) ->
+    forall v args flag_values,
+      spec i args (get (update flag_values f v)) =
+      spec i args (get (flag_values)).
+  Proof.
+    destruct i; destruct f;
+      repeat match goal with
+             | _ => progress intros
+             | _ => progress cbn [flags_written spec In] in *
+             | _ => reflexivity
+             | _ => rewrite get_update_neq by congruence
+             | _ => tauto
+             end.
+  Qed.
 End Proofs.
 Hint Resolve precondition_dec instr_eq_dec : deciders.

@@ -31,10 +31,17 @@ Class instr_impl {regt : reg_impl} {flagt : flag_impl} :=
   {
     instruction : Type;
     instr_enum : enumerator instruction;
+    flags_read : instruction -> list (@flag flagt);
     flags_written : instruction -> list (@flag flagt);
     num_source_regs : instruction -> nat;
     spec : instruction -> list Z -> (@flag flagt -> bool) -> Z;
     precondition : instruction -> @register regt -> list (@register regt + Z) -> Prop;
+    flags_read_correct :
+      forall i f,
+        ~ (In f i.(flags_written)) ->
+        forall v args flag_values,
+          spec i args (get (map_impl:=flag_mapt) (update flag_values f v)) =
+          spec i args (get (flag_values));
     instr_eq_dec : forall i1 i2 : instruction, {i1 = i2} + {i1 <> i2};
     precondition_dec : forall i rd args, {precondition i rd args} + {~ precondition i rd args};
   }.
