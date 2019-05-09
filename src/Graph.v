@@ -15,6 +15,271 @@ Module Graphs.
     Existing Instance reg_mapt. Existing Instance flag_mapt.
     Existing Instance reg_enum. Existing Instance flag_enum.
 
+    Inductive node : Type :=
+    | lvar : positive -> node (* the positive is an identifier *)
+    | lconst : Z -> node
+    | op : instruction -> list nat -> list nat -> node
+    .
+    Definition graph : Type := list node.
+
+    (* returns the index of the argument a within the new graph, which
+    is the same as the old but with a constant appended to the end if
+    a is constant *)
+    Definition to_graph_arg (ctx : map register nat) (a : register + Z)
+               (state : list nat * graph) : list nat * graph :=
+      match a with
+      | inl r => (get ctx r :: fst state, snd state)
+      | inr z => (length (snd state) :: fst state, snd state ++ [lconst z])
+      end.
+    Fixpoint to_graph' (ctx : map register nat) (fctx : map flag nat)
+             (g : graph) (p : program) : graph :=
+      match p with
+      | Ret r => skipn (get ctx r) g
+      | Instr i rd args cont =>
+        let flags := List.map (get fctx) i.(flags_read) in
+        let args_g' := fold_right (to_graph_arg ctx) ([], g) args in
+        let ctx' := fold_right (fun r ctx => update ctx r (S (get ctx r))) ctx enum in
+        let fctx' := fold_right (fun f fctx => update fctx f (S (get fctx f))) fctx enum in
+        let ctx'' := update ctx' rd 0%nat in
+        let fctx'' := fold_right (fun f fctx => update fctx f 0%nat) fctx' i.(flags_written) in
+        to_graph' ctx'' fctx'' (op i (fst args_g') flags :: snd args_g') cont
+      end.
+
+    Definition init_ctx {T} {mapt : map_impl T} {enumT : enumerator T} (start : nat) : map T nat :=
+      fold_right (fun ti ctx => update ctx (fst ti) (snd ti))
+                 (empty 0%nat)
+                 (combine enum (seq start (length enum))).
+    Definition to_graph :=
+      let nregs := length (@enum register _) in
+      let nflags := length (@enum flag _) in
+      to_graph' (init_ctx 0) (init_ctx nregs) (List.map (fun i => lvar (Pos.of_nat i)) (seq 1 (nregs + nflags))).
+    Definition rep p t : Prop := to_graph p = t.
+
+    Definition egraph : Type := list (node * list nat).
+    Definition to_egraph (g : graph) : egraph := List.map (fun n => (n, [])) g.
+    Definition get_node (e : egraph) (i : nat) : node := fst (nth_default (lconst 0, []) e i).
+    Definition get_node_and_graph (e : egraph) (i : nat) : (node * egraph) := (get_node e i, skipn i e).
+
+    Fixpoint top_level' (pos : nat) (hit_list : list nat) (e : egraph) : list nat :=
+      match e with
+      | [] => []
+      | (n, eqclass) :: e' =>
+        if in_dec Nat.eq_dec pos hit_list
+        then pos :: top_level' (S pos) (hit_list ++ List.map (Nat.add pos) eqclass) e'
+        else top_level' (S pos) hit_list e'
+      end.
+    Definition top_level (start : nat) := top_level' 0%nat [start].
+
+    Context {pos_mapt : map_impl positive}.
+    Fixpoint match_expr'
+             (possible_assignments : list (map positive (option nat)))
+             (g : graph) (* graph we're matching *)
+             (pos : nat) (* current position in top-level egraph (used for assignments) *)
+             (countdown : nat) (* number of steps in e until we reach our target node *)
+             (e : egraph)
+      : list (map positive (option nat)) :=
+      match e with
+      | [] => []
+      | (n, eqclass) :: e' =>
+        match countdown with
+        | S countdown' => match_expr' possible_assignments g (S pos) countdown' e'
+        | O =>
+          match g, n with
+          | [], _ => possible_assignments
+          | lvar id :: _, _ =>
+            flat_map
+              (fun assignment =>
+                 match get assignment id with
+                 | None => [update assignment id (Some pos)]
+                 | Some i => if Nat.eqb i pos then [assignment] else []
+                 end)
+              possible_assignments
+          | lconst z :: _, lconst z' => if Z.eqb z z' then possible_assignments else []
+          | op i args flags :: _, op i' args' flags' =>
+            if instr_eq_dec i i'
+            then
+              fold_right
+                (fun g'_eqclass possible_assignments =>
+                   flat_map
+                     (fun idx => match_expr' possible_assignments (fst g'_eqclass) (S pos) idx e')
+                     (snd g'_eqclass))
+                possible_assignments
+                (combine (List.map (fun idx => skipn (S idx) g) args)
+                         (List.map (fun idx => top_level idx e') args'))
+            else []
+          | _, _ => []
+          end
+        end
+      end.
+    Definition match_expr (g : graph) (e : egraph) :=
+      match_expr' [empty None] g 0%nat 0%nat e.
+  End Graphs.
+End Graphs.
+
+
+Module PositiveMaps.
+    Definition pos_map' {B : Type} : Type := list (positive * B).
+    Definition pos_map {B : Type} : Type := B * @pos_map' B.
+
+    Fixpoint get' {B} (d : B) (m : pos_map') (p : positive) : B :=
+      match m with
+      | [] => d
+      | pb :: m' =>
+        if Pos.eqb (fst pb) p then snd pb else get' d m' p
+      end.
+    Definition get {B} (m : pos_map) (p : positive) : B :=
+      get' (fst m) (snd m) p.
+
+    Definition update {B} (m : pos_map) (p : positive) (v : B) :=
+      (fst m, (p,v) :: snd m).
+
+    Definition empty {B} (default : B) : pos_map := (default, []).
+
+    Lemma get_empty B (d : B) p : get (empty d) p = d.
+    Proof. reflexivity. Qed.
+    
+    Lemma get_update_eq B p (b : B) (m : pos_map) : get (update m p b) p = b.
+    Proof. cbv [get get' update]. cbn [fst snd]. rewrite Pos.eqb_refl. reflexivity. Qed.
+    Lemma get_update_neq B p1 p2 (b : B) (m : pos_map) : p1 <> p2 -> get (update m p1 b) p2 = get m p2.
+    Proof. rewrite <-Pos.eqb_neq. intros; cbv [get get' update]. cbn [fst snd].
+           destruct (Pos.eqb p1 p2); congruence. Qed.
+
+    Instance pos_mapt : map_impl positive.
+    Proof.
+      apply Build_map_impl with (get:=@get) (update:=@update) (empty:=@empty).
+      { apply get_empty. }
+      { apply get_update_eq. }
+      { apply get_update_neq. }
+    Defined.
+End PositiveMaps.
+Existing Instance PositiveMaps.pos_mapt.
+
+
+Require Import ProofOfConcept.Glue.
+Require Import ProofOfConcept.Registers.
+Import Registers.
+Import Instructions.
+Import Graphs.
+Definition exg : graph := Eval vm_compute in (to_graph (Instr ADD32 r0 [inl r0; inr 0] (Ret r0))).
+Print exg.
+(*
+[op ADD32 [0%nat; 9%nat] []; lvar 1; lvar 2; lvar 3; lvar 4; lvar 5; lvar 6; lvar 7; lvar 8; lvar 9; lconst 0]
+*)
+
+(* ADD r0 r0 r0
+       \\________________
+        \                \
+         \           ADD r0 r0 0
+          \_____    _____/
+                \  /
+          ADD r0 r0 r1
+ *)
+Definition exp : program :=
+  Instr ADD32 r0 [inl r0;inl r0]
+        (Instr ADD32 r0 [inl r0; inr 0]
+               (Instr ADD32 r0 [inl r0; inl r1] (Ret r0))).
+Definition exe : egraph :=
+  (* based on Eval vm_compute in (to_egraph (Graphs.to_graph exp)) *)
+  [(op ADD32 [0%nat; 3%nat] [], []);
+     (op ADD32 [0%nat; 10%nat] [], [0%nat]);
+     (op ADD32 [0%nat; 0%nat] [], []);
+     (lvar 1, []); (lvar 2, []); (lvar 3, []);
+       (lvar 4, []); (lvar 5, []); (lvar 6, []);
+         (lvar 7, []); (lvar 8, []); (lvar 9, []);
+         (lconst 0, [])].
+
+Definition exm := match_expr exg (skipn 1 exe).
+Eval vm_compute in exm.
+Eval cbv - [Pos.eqb] in exm.
+Eval compute in (skipn 10%nat [
+     (op ADD32 [0%nat; 0%nat] [], []);
+     (lvar 1, []); (lvar 2, []); (lvar 3, []);
+       (lvar 4, []); (lvar 5, []); (lvar 6, []);
+         (lvar 7, []); (lvar 8, []); (lvar 9, []);
+         (lconst 0, [])]).
+Check flat_map.
+Check fold_right.
+Axiom wrapper_snd : forall {A B}, A -> B -> A.
+Eval cbn - [match_expr'] in
+    (
+      let T := list (map (map_impl := pos_mapt) positive (option nat)) in
+    let possible_assignments : T := [AbstractMap.empty None] in
+    let g := exg in
+    let pos := 0%nat in
+    let countdown := 0%nat in
+    let e := skipn 1 exe in
+      match e return T with
+      | [] => []
+      | (n, eqclass) :: e' =>
+          match g, n return T with
+          | [], _ => possible_assignments
+          | lvar id :: _, _ =>
+            flat_map
+              (B := map positive (option nat))
+              (fun assignment =>
+                 match AbstractMap.get assignment id with
+                 | None => [AbstractMap.update assignment id (Some pos)]
+                 | Some i => if Nat.eqb i pos then [assignment] else []
+                 end)
+              possible_assignments
+          | lconst z :: _, lconst z' => if Z.eqb z z' then possible_assignments else []
+          | op i args flags :: _, op i' args' flags' =>
+            if instr_eq_dec i i'
+            then
+              (* 
+              fold_right
+                (A := list (map positive (option nat)))
+                (B := graph * list nat)
+                (fun g'_eqclass possible_assignments =>
+                   flat_map
+                     (B := map positive (option nat))
+                     (fun idx => match_expr' possible_assignments (fst g'_eqclass) (S pos) idx e')
+                     (snd g'_eqclass))
+                possible_assignments *)
+              wrapper_snd possible_assignments
+                (combine (List.map (fun idx => skipn (S idx) g) args)
+                         (List.map (fun idx => top_level (skipn idx e')) args'))
+            else []
+          | _, _ => []
+        end
+      end).
+
+Eval compute in 
+(match_expr' [AbstractMap.empty None] [lconst 0] 1 0
+            [(op ADD32 [0%nat; 10%nat] [], [0%nat]); (op ADD32 [0%nat; 0%nat] [], []); 
+            (lvar 1, []); (lvar 2, []); (lvar 3, []); (lvar 4, []); (lvar 5, []); (lvar 6, []); 
+            (lvar 7, []); (lvar 8, []); (lvar 9, []); (lconst 0, [])] ++ []).
+    Definition match_expr (g : graph) (e : egraph) :=
+      match_expr' [empty None] g 0%nat 0%nat e.
+Goal False.
+  pose exm as M.
+  cbv [exm match_expr match_expr' exe] in M.
+  assert (exg = hd (lconst 0) exg :: tl exg) by admit.
+  rewrite H in M.
+  destruct exg.
+  2 : { 
+  cbv - [exg] in M.
+  lazymatch goal with _ := context [combine ?x ?y] |- _ => idtac y end.
+  
+Eval cbn [exm exe match_expr match_expr' List.map combine skipn top_level top_level' app in_dec Nat.eq_dec] in exm.
+
+
+
+          
+            
+
+
+    
+
+    
+Module Graphs.
+  Section Graphs.
+    Context `{instrt : instr_impl}.
+    Context (instr_size : instruction -> Z) (instr_size_pos : forall i, 0 < i.(instr_size)).
+    Context (instr_cost : instruction -> nat).
+    Existing Instance reg_mapt. Existing Instance flag_mapt.
+    Existing Instance reg_enum. Existing Instance flag_enum.
+
     Inductive leaf : Type :=
     | lvar : positive -> leaf (* the positive is an identifier *)
     | lconst : Z -> leaf
@@ -66,6 +331,8 @@ Module Graphs.
     Proof.
       (* TODO *)
     Admitted.
+    
+    
 
     (* in an etree, every node is actually an equivalence class -- including leaves *)
     Inductive etree : Type :=
@@ -218,6 +485,50 @@ Module Graphs.
     (* TODO: we might eventually want things in terms of mathematical
     functions, so it might be good to do a structure that allows that *)
 
+    (* TODO: we don't want huuuuuge trees. Try to find a sharing
+    method -- maybe flat lists like crosscrypto. *)
+
+
+    (*
+      Given a node, we want to see what instruction it holds
+      We also want to be able to get all nodes/leaves each argument/flag could have come from
+      
+      Idea: etree = (list positive) plus a map of positive -> list etree
+
+      Idea: flat list
+        each node is in the list and contains pointers to places farther back in the list for arguments/equivalent nodes
+        now, if we wanted to extend with another equivalent node, we would add it to the head and put pointers that had all that node's equivalent things plus that node
+     *)
+
+    Definition match_leaf (all_assignments : list (map positive (option etree))) (l : leaf) (e : etree)
+      : list (map positive (option etree)) :=
+      match e with
+      | enode elts =>
+        match l with
+        | lvar id =>
+          (* For each assignment in all_assignments, we check if 'id'
+             has already been assigned to an etree. If yes, but the
+             assigned value doesn't match any values in elts, this
+             assignment is not compatible with e and we remove it. If
+             no, we assign 'id' to e. *)
+          flat_map (fun elt =>
+                      flat_map
+                        (fun assignment =>
+                           match get assignment id return list (map positive (option etree)) with
+                           | None => update assignment id (Some (enode elts)) :: nil
+                           | Some (enode elts2) =>
+                             if in_dec elt_eq_dec elt elts2
+                             then [assignment]
+                             else nil
+                           end) all_assignments) elts
+        | lconst z =>
+          (* all the assignments are fine as long as a constant equal to z exists in elts *)
+          if in_dec elt_eq_dec (inl (lconst z)) elts
+          then all_assignments
+          else nil
+        end
+      end.
+
     (* ill-formed without fuel because Coq isn't smart enough to see under the combine/fold right *)
     Fixpoint match_tree'
              (depth : nat) (* fuel *)
@@ -227,36 +538,11 @@ Module Graphs.
       match depth with
       | O => nil
       | S depth' =>
-        match e with
-        | enode elts =>
-          match t with
-          | Leaf l =>
-            match l with
-            | lvar id =>
-              flat_map (fun elt =>
-                          flat_map
-                            (fun assignment =>
-                               match get assignment id return list (map positive (option etree)) with
-                               | None => update assignment id (Some (enode elts)) :: nil
-                               | Some e2 =>
-                                 match e2 with
-                                 | enode elts2 =>
-                                   if in_dec elt_eq_dec elt elts2
-                                   then [assignment]
-                                   else nil
-                                 end
-                               end) all_assignments) elts
-            | lconst z =>
-              (* all the assignments are fine as long as a constant equal to z exists in elts *)
-              match (find (fun elt => match elt with
-                                      | inl (lconst z2) => Z.eqb z z2
-                                      | _ => false
-                                      end) elts) with
-              | None => nil
-              | Some _ => all_assignments
-              end
-            end
-          | Node ri rargs rflags =>
+        match t with
+        | Leaf l => match_leaf all_assignments l e
+        | Node ri rargs rflags =>
+          match e with
+          | enode elts =>
             flat_map (fun elt =>
                         match elt with
                         | inl l => nil
@@ -272,19 +558,38 @@ Module Graphs.
         end
       end.
 
-    Fixpoint depth (e : etree) : nat :=
-      match e with
-      | enode elts =>
-        fold_right (fun elt out =>
-                      match elt with
-                      | inl l => max 1 out
-                      | inr (i, args, flags) =>
-                        S (fold_right (fun t' => max (depth t'))
-                                      (fold_right (fun t' => max (depth t'))
-                                                  0%nat flags)
-                                      args)
-                      end) 0%nat elts
+    Fixpoint depth (t : tree) : nat :=
+      match t with
+      | Leaf l => 1%nat
+      | Node _ args flags =>
+        fold_right max (fold_right max 0%nat (List.map depth args)) (List.map depth flags)
       end.
+    Definition match_tree (t : tree) (e : etree) : list (map positive (option etree)) :=
+      match_tree' (depth t) [] t e.
+    (* TODO: filter out incomplete assignments? *)
+
+    Fixpoint do_assignment (assignment : map positive (option etree)) (t : tree) : etree :=
+      match t with
+      | Leaf l =>
+        match l with
+        | lvar p => match get assignment p with
+                    | None => enode [] (* shouldn't happen *)
+                    | Some e => e
+                    end
+        | lconst z => enode [inl (lconst z)]
+        end
+      | Node i args flags =>
+        enode [inr (i, List.map (do_assignment assignment) args, List.map (do_assignment assignment) flags)]
+      end.
+
+    Axiom assignment_eq_dec : forall a1 a2 : map positive (option etree), {a1 = a2} + {a1 <> a2}.
+    Definition rewrite_with (rule_lhs : tree) (rule_rhs : tree) (e : etree) :=
+      let lhs_options := match_tree rule_lhs e in
+      let rhs_options := match_tree rule_rhs e in
+      let options := filter (fun assignment => if in_dec assignment_eq_dec assignment rhs_options
+                                               then false else true) lhs_options in
+      
+      
 
     Fixpoint get_assignments' assignments (rule_lhs : tree) (e : etree) : option (map positive etree) :=
       match e with
